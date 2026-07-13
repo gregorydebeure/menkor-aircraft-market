@@ -75,30 +75,44 @@ BIZ_AIRCRAFT = {
 # All model codes flattened
 ALL_MODELS = [m for models in BIZ_AIRCRAFT.values() for m in models]
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=86400)
 def load_faa_data():
-    """Load FAA aircraft registry from MASTER.txt"""
+    """Load FAA aircraft registry — from local file or download from FAA."""
+    import zipfile, io
     base = os.path.dirname(os.path.abspath(__file__))
     
-    # Try different possible file locations
-    candidates = [
-        os.path.join(base, "MASTER.txt"),
-        os.path.join(base, "faa_data", "MASTER.txt"),
-        "MASTER.txt",
-    ]
-    
-    for path in candidates:
+    # 1. Try local file first
+    for path in [os.path.join(base,"MASTER.txt"), "MASTER.txt"]:
         if os.path.exists(path):
             try:
-                df = pd.read_csv(path, 
-                    encoding='latin-1',
-                    dtype=str,
-                    low_memory=False)
-                # Clean column names
+                df = pd.read_csv(path, encoding='latin-1', dtype=str, low_memory=False)
                 df.columns = df.columns.str.strip().str.upper()
-                return df, path
-            except Exception as e:
-                continue
+                return df, "local"
+            except:
+                pass
+    
+    # 2. Download from FAA website
+    try:
+        import urllib.request
+        url = "https://registry.faa.gov/database/ReleasableAircraft.zip"
+        status_msg = st.empty()
+        status_msg.info("📥 Downloading FAA registry... (first load only, ~50MB)")
+        
+        with urllib.request.urlopen(url, timeout=120) as r:
+            zip_data = r.read()
+        
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+            # Find MASTER.txt in zip
+            names = z.namelist()
+            master = next((n for n in names if "MASTER" in n.upper()), None)
+            if master:
+                with z.open(master) as f:
+                    df = pd.read_csv(f, encoding='latin-1', dtype=str, low_memory=False)
+                    df.columns = df.columns.str.strip().str.upper()
+                    status_msg.empty()
+                    return df, "faa_download"
+    except Exception as e:
+        pass
     
     return None, None
 
