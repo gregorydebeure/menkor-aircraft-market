@@ -1,10 +1,11 @@
 """
 ✈️ Menkor Aviation — Aircraft Market
-FAA Registry Browser — Business Aviation
+Business Aviation Registry Browser
 """
 import streamlit as st
 import pandas as pd
 import os
+import io
 
 st.set_page_config(page_title="Menkor Aviation — Aircraft Market",
                    page_icon="✈", layout="wide",
@@ -21,380 +22,325 @@ st.markdown("""<style>
 .sub-title{font-size:.85rem;color:var(--slate);letter-spacing:.12em;text-transform:uppercase;margin-bottom:1.5rem;}
 .section-header{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);
                 border-bottom:1px solid var(--mid);padding-bottom:.4rem;margin:1.2rem 0 .8rem 0;}
-.ac-card{background:var(--card);border:1px solid var(--mid);border-left:3px solid var(--gold);
-         border-radius:6px;padding:.8rem 1rem;margin-bottom:.6rem;}
 hr{border-color:var(--mid)!important;}
+[data-testid="stMetricValue"]{color:var(--amber)!important;font-size:1.4rem!important;}
+[data-testid="stMetricLabel"]{color:var(--slate)!important;font-size:.72rem!important;}
 .stButton>button{background:var(--mid)!important;color:var(--amber)!important;
                  border:1px solid var(--gold)!important;border-radius:4px;font-weight:600;}
 .stButton>button:hover{background:var(--gold)!important;color:var(--navy)!important;}
-[data-testid="stMetricValue"]{color:var(--amber)!important;}
-[data-testid="stMetricLabel"]{color:var(--slate)!important;}
+[data-testid="stExpander"]{background:var(--card);border:1px solid var(--mid);border-radius:6px;}
 </style>""", unsafe_allow_html=True)
 
-# ─── BUSINESS AVIATION AIRCRAFT TYPES ────────────────────────────────────────
-# FAA manufacturer/model codes for business jets
+# ─── BUSINESS AVIATION MANUFACTURERS & MODELS ────────────────────────────────
 BIZ_AIRCRAFT = {
-    "Gulfstream": [
-        "G-IV","G-V","G550","G650","G700","G450","G500","G600",
-        "GIV","GV","G-IV-SP","GVSP","G650ER","G280","G150","G100",
-    ],
-    "Bombardier": [
-        "CL600","CL601","CL604","CL605","CL650","CL300","CL350",
-        "GL5T","GL6T","BD-700","CL-600","GLOB5T","GLOB6T","GLEXPR",
-        "CRJ1","CRJ2","CRJ7","CRJ9",
-    ],
-    "Dassault Falcon": [
-        "F2TH","F900","F50","F10","F20","FA10","FA20","FA50",
-        "FALK7","FA7X","F7X","F8X","F2000","F2000S","F2000EX",
-        "FA900","FA50EX","FA50","F900EX","F900LX",
-    ],
-    "Cessna Citation": [
-        "C500","C501","C510","C525","C525A","C525B","C525C",
-        "C550","C551","C560","C560XL","C560V","C650","C680",
-        "C700","C750","CIT1","CIT2","CIT3","CITS","CITX",
-    ],
-    "Learjet": [
-        "LJ24","LJ25","LJ28","LJ31","LJ35","LJ36","LJ40",
-        "LJ45","LJ55","LJ60","LJ70","LJ75","LEAR","LR60",
-    ],
-    "Embraer": [
-        "E50P","E55P","EMB500","EMB505","EMB135","EMB145",
-        "LGC60","PHENOM","LEGACY","LINEAGE","E135","E145","E175","E190",
-    ],
-    "Hawker / Beechcraft": [
-        "HS25","H25B","H25C","BE40","BE400","ASTR","ASTRA",
-        "BE55","BE56","BE58","BE60","BE65","BE76","BE80","BE90",
-        "BE99","BE100","BE200","BE300","BE350","BE1900","BPRT","WW24",
-    ],
-    "Piaggio": ["P180","PIAGO"],
-    "Honda": ["HA4T","HJET","HA-420"],
+    "All Manufacturers": [],
+    "Gulfstream": ["G550","G650","G650ER","G700","G500","G600","G450","G280","G150","G-IV","G-V","GIV","GV"],
+    "Bombardier": ["CL604","CL605","CL650","GL5T","GL6T","CL300","CL350","BD-700","GLEXPR","GLOB5T","GLOB6T"],
+    "Dassault Falcon": ["F900EX","F7X","F8X","F2000","F2000S","FA10","FA50","FA900","F50","F900","F900LX"],
+    "Cessna Citation": ["C750","C680","C560XL","C525","C525A","C525B","C650","C550","C500","C510"],
+    "Learjet": ["LJ45","LJ60","LJ75","LJ40","LJ35","LJ55","LJ31","LJ24","LJ25"],
+    "Hawker / Beechcraft": ["H25B","H25C","HS25","BE400","BE40","ASTR","WW24"],
+    "Embraer": ["E50P","E55P","EMB135","EMB145","LGC60","PHENOM","LEGACY"],
     "Pilatus": ["PC12","PC24","PC6"],
-    "Daher / TBM": ["TBM7","TBM8","TBM9","TBM700","TBM850","TBM900","TBM930","TBM940","TBM960"],
+    "Daher / TBM": ["TBM7","TBM8","TBM9","TBM700","TBM850","TBM900","TBM930","TBM940"],
+    "Honda Jet": ["HA4T","HA-420"],
+    "Piaggio": ["P180"],
 }
 
-# All model codes flattened
-ALL_MODELS = [m for models in BIZ_AIRCRAFT.values() for m in models]
-
-@st.cache_data(show_spinner=False, ttl=86400)
-def load_faa_data():
-    """Load FAA aircraft registry — from local file or download from FAA."""
-    import zipfile, io
+@st.cache_data(show_spinner=False)
+def load_data():
+    """Load aircraft data — FAA file if available, otherwise demo data."""
     base = os.path.dirname(os.path.abspath(__file__))
     
-    # 1. Try local file first
-    for path in [os.path.join(base,"MASTER.txt"), "MASTER.txt"]:
+    # Try FAA MASTER.txt
+    for path in [os.path.join(base,"MASTER.txt"), "MASTER.txt",
+                 os.path.join(base,"master.txt"), "master.txt"]:
         if os.path.exists(path):
             try:
                 df = pd.read_csv(path, encoding='latin-1', dtype=str, low_memory=False)
                 df.columns = df.columns.str.strip().str.upper()
-                return df, "local"
-            except:
+                # Filter to biz aviation only
+                all_models = [m for mfr,mods in BIZ_AIRCRAFT.items() if mfr != "All Manufacturers" for m in mods]
+                # Find model column
+                mdl_col = None
+                for c in df.columns:
+                    if "MDL" in c.upper() or "MODEL" in c.upper():
+                        mdl_col = c; break
+                if mdl_col:
+                    pattern = "|".join(all_models)
+                    mask = df[mdl_col].str.strip().str.upper().str.contains(pattern, na=False, regex=True)
+                    df = df[mask]
+                # Standardize column names
+                df.columns = [c.strip() for c in df.columns]
+                return df, "FAA Registry (Live Data)"
+            except Exception as e:
                 pass
     
-    # 2. Download from FAA website
-    try:
-        import urllib.request
-        url = "https://registry.faa.gov/database/ReleasableAircraft.zip"
-        status_msg = st.empty()
-        status_msg.info("📥 Downloading FAA registry... (first load only, ~50MB)")
-        
-        with urllib.request.urlopen(url, timeout=120) as r:
-            zip_data = r.read()
-        
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-            # Find MASTER.txt in zip
-            names = z.namelist()
-            master = next((n for n in names if "MASTER" in n.upper()), None)
-            if master:
-                with z.open(master) as f:
-                    df = pd.read_csv(f, encoding='latin-1', dtype=str, low_memory=False)
-                    df.columns = df.columns.str.strip().str.upper()
-                    status_msg.empty()
-                    return df, "faa_download"
-    except Exception as e:
-        pass
-    
-    return None, None
+    # Demo data
+    return get_demo_data(), "DEMO MODE — Sample Data"
 
-@st.cache_data(show_spinner=False)  
-def load_aircraft_ref():
-    """Load FAA aircraft reference file"""
-    base = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(base, "ACFTREF.txt"),
-        os.path.join(base, "faa_data", "ACFTREF.txt"),
-        "ACFTREF.txt",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            try:
-                df = pd.read_csv(path, encoding='latin-1', dtype=str, low_memory=False)
-                df.columns = df.columns.str.strip().str.upper()
-                return df
-            except:
-                continue
-    return None
+def get_demo_data():
+    import random
+    random.seed(42)
+    records = []
+    
+    data = {
+        "Gulfstream":{"models":["G550","G650","G650ER","G700","G500","G600","G450","G280"],"prefix":"N","years":(2005,2024),"count":120},
+        "Bombardier":{"models":["CL604","CL605","CL650","GL5T","GL6T","CL300","CL350"],"prefix":"N","years":(2000,2024),"count":110},
+        "Dassault Falcon":{"models":["F900EX","F7X","F8X","F2000","FA10","FA50","FA900"],"prefix":"N","years":(1998,2024),"count":80},
+        "Cessna Citation":{"models":["C750","C680","C560XL","C525","C525A","C650","C550"],"prefix":"N","years":(1995,2024),"count":150},
+        "Learjet":{"models":["LJ45","LJ60","LJ75","LJ40","LJ35","LJ55"],"prefix":"N","years":(1985,2020),"count":90},
+        "Hawker":{"models":["H25B","H25C","HS25","BE400","WW24"],"prefix":"N","years":(1985,2018),"count":80},
+        "Embraer":{"models":["E50P","E55P","EMB135","EMB145"],"prefix":"N","years":(2005,2024),"count":70},
+        "Pilatus":{"models":["PC12","PC24"],"prefix":"N","years":(2000,2024),"count":60},
+    }
+    
+    states_cities = {
+        "FL":["MIAMI","FORT LAUDERDALE","PALM BEACH","NAPLES","TAMPA","BOCA RATON"],
+        "CA":["LOS ANGELES","SAN FRANCISCO","SAN DIEGO","VAN NUYS","SANTA BARBARA"],
+        "TX":["DALLAS","HOUSTON","AUSTIN","MIDLAND","SAN ANTONIO"],
+        "NY":["NEW YORK","WHITE PLAINS","PURCHASE","LONG ISLAND"],
+        "NJ":["TETERBORO","MORRISTOWN","NEWARK"],
+        "GA":["ATLANTA","PEACHTREE CITY","SAVANNAH"],
+        "IL":["CHICAGO","WAUKEGAN","OAK BROOK"],
+        "AZ":["SCOTTSDALE","PHOENIX","TUCSON"],
+        "CO":["DENVER","ASPEN","VAIL"],
+        "NV":["LAS VEGAS","HENDERSON"],
+        "CT":["GREENWICH","HARTFORD","STAMFORD"],
+        "MA":["BOSTON","BEDFORD","NORWOOD"],
+        "OH":["COLUMBUS","CLEVELAND","CINCINNATI"],
+        "PA":["PHILADELPHIA","PITTSBURGH"],
+        "NC":["CHARLOTTE","RALEIGH"],
+    }
+    
+    owners = ["AVIATION LLC","CHARTER SERVICES INC","HOLDINGS LLC","TRANSPORT CORP",
+              "AIRCRAFT MGMT LLC","VENTURES INC","AVIATION GROUP LLC","LEASING CORP",
+              "PRIVATE EQUITY LLC","CAPITAL PARTNERS LP","ENTERPRISES INC","AIRWAYS INC",
+              "JET SERVICES LLC","EXECUTIVE FLIGHT LLC","GLOBAL AVIATION LLC"]
+    
+    i = 0
+    for mfr, d in data.items():
+        for _ in range(d["count"]):
+            model = random.choice(d["models"])
+            year = random.randint(*d["years"])
+            state = random.choice(list(states_cities.keys()))
+            city = random.choice(states_cities[state])
+            letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+            n_num = f"N{random.randint(1,999)}{random.choice(letters)}{random.choice(letters)}"
+            records.append({
+                "N-NUMBER": n_num,
+                "SERIAL NUMBER": f"{i+1000:05d}",
+                "MANUFACTURER NAME": mfr,
+                "MFR MDL CODE": model,
+                "YEAR MFR": str(year),
+                "NAME": random.choice(owners),
+                "CITY": city,
+                "STATE": state,
+                "COUNTRY": "US",
+                "STATUS CODE": random.choices(["V","N"],weights=[90,10])[0],
+                "TYPE REGISTRANT": random.choice(["1","2","3","4","5"]),
+            })
+            i += 1
+    
+    return pd.DataFrame(records)
 
 def main():
     # Header
-    c1, c2 = st.columns([1, 6])
-    with c1:
-        st.markdown("<div style='font-size:3rem;text-align:center;margin-top:.3rem'>✈</div>", unsafe_allow_html=True)
+    c1,c2 = st.columns([1,6])
+    with c1: st.markdown("<div style='font-size:3rem;text-align:center;margin-top:.3rem'>✈</div>",unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="main-title">Aircraft Market</div>', unsafe_allow_html=True)
-        st.markdown('<div class="sub-title">Menkor Aviation GBL — FAA Registry Browser</div>', unsafe_allow_html=True)
-    st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown('<div class="main-title">Aircraft Market</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sub-title">Menkor Aviation GBL — Business Aviation Registry</div>',unsafe_allow_html=True)
+    st.markdown("<hr>",unsafe_allow_html=True)
 
     # Load data
-    with st.spinner("Loading FAA registry..."):
-        df, path = load_faa_data()
-        df_ref = load_aircraft_ref()
+    with st.spinner("Loading aircraft registry..."):
+        df, source = load_data()
+    
+    if "DEMO" in source:
+        st.info(f"📊 {source} — {len(df):,} aircraft | Upload MASTER.txt to GitHub for full FAA data")
+    else:
+        st.success(f"✅ {source} — {len(df):,} business aviation aircraft")
 
-    if df is None:
-        st.error("⚠️ FAA data file not found.")
-        st.markdown("""
-        <div style="background:#112244;border:1px solid #C9A84C;border-radius:8px;padding:1.5rem;margin:1rem 0">
-            <div style="font-size:1rem;font-weight:700;color:#E8C46A;margin-bottom:.8rem">
-                📥 How to set up the FAA Registry
-            </div>
-            <div style="font-size:.9rem;color:#D6E4F7;line-height:1.8">
-                <b>1.</b> Go to <a href="https://registry.faa.gov/database/ReleasableAircraft.zip" 
-                   target="_blank" style="color:#C9A84C">registry.faa.gov/database/ReleasableAircraft.zip</a><br>
-                <b>2.</b> Download and extract the ZIP<br>
-                <b>3.</b> Upload <b>MASTER.txt</b> and <b>ACFTREF.txt</b> to this GitHub repo<br>
-                <b>4.</b> The app will automatically load them
-            </div>
-        </div>""", unsafe_allow_html=True)
-        
-        # Show demo mode
-        st.info("📊 Running in DEMO mode with sample data")
-        df = generate_demo_data()
-        path = "demo"
-
-    # Sidebar filters
+    # ── Sidebar filters ───────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown('<div class="section-header">🔍 Search & Filter</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">✈ Aircraft Type</div>',unsafe_allow_html=True)
+        
+        mfr = st.selectbox("Manufacturer", list(BIZ_AIRCRAFT.keys()), key="mfr")
+        
+        if mfr != "All Manufacturers" and BIZ_AIRCRAFT[mfr]:
+            model_opts = ["All Models"] + BIZ_AIRCRAFT[mfr]
+        else:
+            all_m = sorted(set(m for k,v in BIZ_AIRCRAFT.items() if k!="All Manufacturers" for m in v))
+            model_opts = ["All Models"] + all_m
+        
+        model = st.selectbox("Model", model_opts, key="model")
+        
+        st.markdown('<div class="section-header">📅 Year of Manufacture</div>',unsafe_allow_html=True)
+        yr_col = None
+        for c in df.columns:
+            if "YEAR" in c.upper():
+                yr_col = c; break
+        yr_col = yr_col or "YEAR MFR"
+        years_num = pd.to_numeric(df.get(yr_col, pd.Series(dtype=str)), errors='coerce').dropna()
+        y_min = int(years_num.min()) if len(years_num) else 1985
+        y_max = int(years_num.max()) if len(years_num) else 2024
+        year_range = st.slider("Year range", y_min, y_max, (max(y_min,2000), y_max))
+        
+        st.markdown('<div class="section-header">📋 Status</div>',unsafe_allow_html=True)
+        show_status = st.selectbox("Status", ["All","Active only"], key="status")
+        
+        st.markdown('<div class="section-header">🌍 State</div>',unsafe_allow_html=True)
+        state_col = "STATE" if "STATE" in df.columns else None
+        if state_col:
+            states = ["All"] + sorted(df[state_col].dropna().unique().tolist())
+            sel_state = st.selectbox("US State", states, key="state")
+        else:
+            sel_state = "All"
+        
+        st.markdown("---")
+        search = st.button("🔍 Search Aircraft", type="primary", use_container_width=True)
+        st.markdown("---")
+        st.markdown(f'<div style="text-align:center"><a href="https://aviation-cost-estimato-6uj3ptpc57onofwlavwhfn.streamlit.app" style="color:#C9A84C;font-size:.8rem">← Cost Estimator</a> &nbsp;|&nbsp; <a href="https://menkor-quotation-9nff8mo2pbyf8vddbsucvm.streamlit.app" style="color:#C9A84C;font-size:.8rem">✈ Quotation</a></div>',unsafe_allow_html=True)
+
+    # ── Search ────────────────────────────────────────────────────────────
+    if search:
+        result = df.copy()
+        
+        # Find model column flexibly
+        mdl_col = None
+        for c in result.columns:
+            if "MDL" in c.upper() or "MODEL" in c.upper():
+                mdl_col = c; break
         
         # Manufacturer filter
-        manufacturer = st.selectbox(
-            "Manufacturer",
-            ["All"] + list(BIZ_AIRCRAFT.keys()),
-            key="mfr_sel"
-        )
+        if mfr != "All Manufacturers" and mdl_col:
+            models_for_mfr = BIZ_AIRCRAFT[mfr]
+            pat = "|".join(models_for_mfr)
+            result = result[result[mdl_col].str.strip().str.upper().str.contains(pat, na=False, regex=True)]
         
-        # Model filter based on manufacturer
-        if manufacturer != "All":
-            model_options = ["All"] + BIZ_AIRCRAFT[manufacturer]
+        # Model filter
+        if model != "All Models" and mdl_col:
+            result = result[result[mdl_col].str.strip().str.upper().str.contains(model.upper(), na=False)]
+        
+        # Year filter
+        if yr_col in result.columns:
+            result[yr_col] = pd.to_numeric(result[yr_col], errors='coerce')
+            result = result[result[yr_col].between(year_range[0], year_range[1])]
+        
+        # Status filter
+        if show_status == "Active only" and "STATUS CODE" in result.columns:
+            result = result[result["STATUS CODE"].str.strip() == "V"]
+        
+        # State filter
+        if sel_state != "All" and state_col and state_col in result.columns:
+            result = result[result[state_col].str.strip() == sel_state]
+        
+        st.session_state["results"] = result.head(1000)
+        st.session_state["search_done"] = True
+
+    # ── Results ───────────────────────────────────────────────────────────
+    if st.session_state.get("search_done") and "results" in st.session_state:
+        results = st.session_state["results"]
+        n = len(results)
+        
+        st.markdown(f'<div class="section-header">✈ {n:,} Aircraft Found</div>',unsafe_allow_html=True)
+        
+        # KPIs
+        k1,k2,k3,k4 = st.columns(4)
+        k1.metric("Results", f"{n:,}")
+        yr_col2 = "YEAR MFR" if "YEAR MFR" in results.columns else "MFR YR"
+        if yr_col2 in results.columns:
+            yrs = pd.to_numeric(results[yr_col2], errors='coerce').dropna()
+            if len(yrs):
+                k2.metric("Oldest", str(int(yrs.min())))
+                k3.metric("Newest", str(int(yrs.max())))
+                k4.metric("Avg Year", str(int(yrs.mean())))
+        
+        st.markdown("<hr>",unsafe_allow_html=True)
+        
+        # Build display dataframe
+        # Build flexible column map from actual columns
+        col_map = {}
+        for c in results.columns:
+            cu = c.upper()
+            if "N-NUMBER" in cu or cu == "N NUMBER": col_map[c] = "N-Reg"
+            elif "SERIAL" in cu and "NUMBER" in cu: col_map[c] = "Serial"
+            elif "MDL" in cu or "MODEL" in cu: col_map[c] = "Model"
+            elif "YEAR" in cu and "MFR" in cu: col_map[c] = "Year"
+            elif cu == "NAME": col_map[c] = "Owner"
+            elif cu == "CITY": col_map[c] = "City"
+            elif cu == "STATE": col_map[c] = "State"
+            elif "STATUS" in cu: col_map[c] = "Status"
+        disp = {}
+        for orig,alias in col_map.items():
+            if orig in results.columns and alias not in disp:
+                disp[alias] = results[orig].fillna("—").astype(str).str.strip()
+        
+        if disp:
+            df_disp = pd.DataFrame(disp)
+            # Color status
+            st.dataframe(df_disp, use_container_width=True, hide_index=True, height=520)
         else:
-            model_options = ["All"] + sorted(ALL_MODELS)
+            st.dataframe(results, use_container_width=True, hide_index=True, height=520)
         
-        model = st.selectbox("Aircraft Model / Type", model_options, key="model_sel")
+        # Stats by manufacturer
+        if n > 0:
+            st.markdown("<hr>",unsafe_allow_html=True)
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.markdown('<div class="section-header">📊 By Model</div>',unsafe_allow_html=True)
+                m_col = "MFR MDL CODE" if "MFR MDL CODE" in results.columns else None
+                if m_col:
+                    model_counts = results[m_col].value_counts().head(10)
+                    st.bar_chart(model_counts)
+            
+            with col_b:
+                st.markdown('<div class="section-header">📅 By Year</div>',unsafe_allow_html=True)
+                if yr_col2 in results.columns:
+                    yr_counts = pd.to_numeric(results[yr_col2],errors='coerce').dropna().astype(int).value_counts().sort_index()
+                    st.bar_chart(yr_counts)
         
-        st.markdown('<div class="section-header">📅 Year Filter</div>', unsafe_allow_html=True)
-        year_min = st.number_input("Year from", min_value=1970, max_value=2025, value=2000, step=1)
-        year_max = st.number_input("Year to", min_value=1970, max_value=2025, value=2025, step=1)
-        
-        st.markdown('<div class="section-header">🌍 Country</div>', unsafe_allow_html=True)
-        country = st.selectbox("Country of Registration", ["All", "USA (N-reg)", "All FAA"], key="country_sel")
-        
-        st.markdown('<div class="section-header">📋 Status</div>', unsafe_allow_html=True)
-        status = st.selectbox("Aircraft Status", ["All", "Valid", "Active"], key="status_sel")
-        
-        st.markdown("---")
-        search_btn = st.button("🔍 Search Aircraft", type="primary", use_container_width=True)
-        
-        st.markdown("""<div style="font-size:.72rem;color:#8496B0;margin-top:.5rem;text-align:center">
-            Data source: FAA Releasable Aircraft Registry<br>
-            Updated monthly
+        # Export & links
+        st.markdown("<br>",unsafe_allow_html=True)
+        e1,e2 = st.columns(2)
+        with e1:
+            csv = results.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇ Export CSV", data=csv,
+                file_name="menkor_aircraft.csv", mime="text/csv",
+                use_container_width=True)
+        with e2:
+            model_q = model if model != "All Models" else mfr.replace(" ","")
+            controller_url = f"https://www.controller.com/listings/aircraft/for-sale/list?CategoryId=1&SearchRadius=0&Make={mfr.replace(' ','+')}"
+            st.markdown(f'<div style="text-align:center;padding:.5rem"><a href="{controller_url}" target="_blank" style="background:#C9A84C;color:#0B1629;padding:.6rem 1.5rem;border-radius:5px;font-weight:700;text-decoration:none;font-size:.9rem">✈ View on Controller.com</a></div>',unsafe_allow_html=True)
+    
+    elif not st.session_state.get("search_done"):
+        # Welcome screen
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#112244 0%,#1A3A6E 100%);
+             border:1px solid #C9A84C;border-radius:12px;padding:2.5rem;text-align:center;margin:2rem 0">
+            <div style="font-size:2.5rem;margin-bottom:1rem">✈</div>
+            <div style="font-size:1.3rem;font-weight:700;color:#E8C46A;margin-bottom:.8rem">
+                Business Aviation Registry
+            </div>
+            <div style="font-size:.9rem;color:#8496B0;margin-bottom:1.5rem;line-height:1.8">
+                Search through business aviation aircraft by manufacturer, model and year.<br>
+                Filter results and export to CSV for prospecting.
+            </div>
+            <div style="font-size:.82rem;color:#D6E4F7">
+                ✓ Gulfstream &nbsp;·&nbsp; ✓ Bombardier &nbsp;·&nbsp; ✓ Dassault &nbsp;·&nbsp;
+                ✓ Cessna &nbsp;·&nbsp; ✓ Learjet &nbsp;·&nbsp; ✓ Embraer &nbsp;·&nbsp; ✓ Pilatus
+            </div>
         </div>""", unsafe_allow_html=True)
-        
-        st.markdown("---")
-        st.markdown(f'<div style="text-align:center"><a href="https://aviation-cost-estimato-6uj3ptpc57onofwlavwhfn.streamlit.app" style="color:#C9A84C;font-size:.8rem">← Cost Estimator</a></div>', unsafe_allow_html=True)
-
-    # Search logic
-    if search_btn or 'results' in st.session_state:
-        if search_btn:
-            with st.spinner("Searching registry..."):
-                results = search_aircraft(df, df_ref, manufacturer, model, year_min, year_max, status)
-                st.session_state['results'] = results
-                st.session_state['search_params'] = {
-                    'manufacturer': manufacturer, 'model': model,
-                    'year_min': year_min, 'year_max': year_max
-                }
-        else:
-            results = st.session_state.get('results', pd.DataFrame())
-        
-        display_results(results, df_ref)
-
-
-def search_aircraft(df, df_ref, manufacturer, model, year_min, year_max, status):
-    """Filter the FAA registry"""
-    result = df.copy()
+        st.info("👈 Select a manufacturer in the sidebar and click **Search Aircraft**")
     
-    # Map column names (FAA format)
-    col_map = {}
-    for col in df.columns:
-        col_map[col] = col
-    
-    # Try to find year column
-    year_col = None
-    for c in ['MFR YR', 'YEAR MFR', 'MFR-YR', 'YEAR', 'MFR_YR']:
-        if c in result.columns:
-            year_col = c; break
-    
-    # Try to find model column  
-    model_col = None
-    for c in ['MFR MDL CODE', 'MODEL', 'MFR-MDL-CODE', 'TYPE ACFT']:
-        if c in result.columns:
-            model_col = c; break
-    
-    # Status column
-    status_col = None
-    for c in ['TYPE REGISTRANT', 'STATUS CODE', 'STATUS', 'CERT ISSUE DATE']:
-        if c in result.columns:
-            status_col = c; break
-
-    # Filter by model
-    if model != "All" and model_col:
-        mask = result[model_col].str.upper().str.contains(model.upper(), na=False)
-        result = result[mask]
-    elif manufacturer != "All" and model_col:
-        models = BIZ_AIRCRAFT[manufacturer]
-        mask = result[model_col].str.upper().str.contains('|'.join(models), na=False, regex=True)
-        result = result[mask]
-    else:
-        # Filter to only biz aviation
-        if model_col:
-            mask = result[model_col].str.upper().str.contains('|'.join(ALL_MODELS[:30]), na=False, regex=True)
-            result = result[mask]
-    
-    # Filter by year
-    if year_col:
-        result[year_col] = pd.to_numeric(result[year_col], errors='coerce')
-        result = result[
-            (result[year_col] >= year_min) & 
-            (result[year_col] <= year_max)
-        ]
-    
-    return result.head(500)
-
-
-def display_results(results, df_ref):
-    """Display search results"""
-    if results is None or len(results) == 0:
-        st.warning("No aircraft found. Try adjusting your filters.")
-        return
-    
-    total = len(results)
-    st.markdown(f'<div class="section-header">✈ {total} Aircraft Found</div>', unsafe_allow_html=True)
-    
-    # Summary metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Results", f"{total:,}")
-    
-    # Try to get year stats
-    year_col = None
-    for c in ['MFR YR', 'YEAR MFR', 'MFR-YR', 'YEAR', 'MFR_YR']:
-        if c in results.columns:
-            year_col = c; break
-    
-    if year_col:
-        years = pd.to_numeric(results[year_col], errors='coerce').dropna()
-        if len(years) > 0:
-            m2.metric("Oldest", f"{int(years.min())}")
-            m3.metric("Newest", f"{int(years.max())}")
-            m4.metric("Avg Year", f"{int(years.mean())}")
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    
-    # Display as clean dataframe
-    # Select relevant columns
-    display_cols = []
-    col_aliases = {
-        'N-NUMBER': 'N-Reg',
-        'SERIAL NUMBER': 'Serial #',
-        'MFR MDL CODE': 'Model Code',
-        'MFR YR': 'Year',
-        'NAME': 'Owner',
-        'CITY': 'City',
-        'STATE': 'State',
-        'STATUS CODE': 'Status',
-        'TYPE REGISTRANT': 'Owner Type',
-        'COUNTRY': 'Country',
-    }
-    
-    # Build display df with available columns
-    display_data = {}
-    for orig, alias in col_aliases.items():
-        if orig in results.columns:
-            display_data[alias] = results[orig].fillna('—').astype(str).str.strip()
-    
-    if display_data:
-        df_display = pd.DataFrame(display_data)
-        # Add Controller.com search link hint
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True,
-            height=500,
-        )
-    else:
-        # Show raw columns
-        st.dataframe(results.head(200), use_container_width=True, hide_index=True, height=500)
-    
-    # Export
-    st.markdown("<br>", unsafe_allow_html=True)
-    csv = results.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        "⬇ Export to CSV",
-        data=csv,
-        file_name="menkor_aircraft_search.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-    
-    # Link to Controller
-    st.markdown("""
-    <div style="background:#112244;border:1px solid #C9A84C;border-radius:6px;
-         padding:1rem;text-align:center;margin-top:1rem">
-        <div style="font-size:.85rem;color:#8496B0;margin-bottom:.5rem">
-            Check availability & pricing on
-        </div>
-        <a href="https://www.controller.com/listings/aircraft/for-sale" 
-           target="_blank"
-           style="background:#C9A84C;color:#0B1629;padding:.5rem 1.5rem;
-                  border-radius:5px;font-weight:700;text-decoration:none;font-size:.9rem">
-            ✈ Search on Controller.com
-        </a>
-    </div>""", unsafe_allow_html=True)
-
-
-def generate_demo_data():
-    """Generate sample data for demo mode"""
-    import random
-    
-    samples = []
-    models = ["G550","G650","CL604","CL605","F900","F7X","C750","LJ60","H25B","BE400"]
-    owners = ["AVIATION LLC","CHARTER GROUP INC","TRANSPORT CORP","HOLDINGS LLC","VENTURES INC"]
-    cities = ["NEW YORK","MIAMI","LOS ANGELES","DALLAS","CHICAGO","ATLANTA","HOUSTON"]
-    states = ["NY","FL","CA","TX","IL","GA","TX"]
-    
-    for i in range(50):
-        model = random.choice(models)
-        samples.append({
-            'N-NUMBER': f"N{random.randint(100,999)}{random.choice('ABCDEFGHJ')}",
-            'SERIAL NUMBER': f"{random.randint(1000,9999)}",
-            'MFR MDL CODE': model,
-            'MFR YR': str(random.randint(2005, 2022)),
-            'NAME': random.choice(owners),
-            'CITY': random.choice(cities),
-            'STATE': random.choice(states),
-            'STATUS CODE': 'V',
-            'TYPE REGISTRANT': '1',
-        })
-    
-    return pd.DataFrame(samples)
-
+    st.markdown("<hr>",unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;font-size:.72rem;color:#4A5568">MENKOR AVIATION GBL — Data source: FAA Releasable Aircraft Registry</div>',unsafe_allow_html=True)
 
 if __name__ == "__main__":
+    if "results" not in st.session_state:
+        st.session_state["results"] = None
+    if "search_done" not in st.session_state:
+        st.session_state["search_done"] = False
     main()
